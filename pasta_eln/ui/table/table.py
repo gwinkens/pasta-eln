@@ -10,14 +10,16 @@ import pandas as pd
 from PySide6.QtCore import QByteArray, QItemSelection, QItemSelectionModel, QModelIndex, QRect, QSize, Qt, Slot
 from PySide6.QtGui import QIcon, QImage, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import (QComboBox, QFileDialog, QHBoxLayout, QListWidget, QListWidgetItem, QMenu, QMessageBox,
-                               QTableView, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QFileDialog, QHBoxLayout, QInputDialog, QListWidget, QListWidgetItem, QMenu,
+                               QMessageBox, QTableView, QVBoxLayout, QWidget)
+from pasta_eln.backend_worker.templates import isMarkdownItem, readTemplate, templateToDoc
 from pasta_eln.backend_worker.worker import Task
 from pasta_eln.misc_tools import callAddOn, isDocID
 from pasta_eln.ui.details.context import DetailContext, DetailOrigin
 from pasta_eln.ui.gui_actions import action
 from pasta_eln.ui.gui_communicate import Communicate
 from pasta_eln.ui.gui_style import SPACE, Button, ButtonStyle, Widget
+from pasta_eln.ui.message_dialog import showMessage
 from pasta_eln.ui.table.filter_row import FilterRow
 from pasta_eln.ui.table.pandas_table_model import PandasTableModel
 from pasta_eln.ui.table.table_header import TableHeader
@@ -85,6 +87,7 @@ class TableView(Widget):
     self.moreButton = Button('More', self, layout=self.buttonbarL, icon='ri.more-fill', style=ButtonStyle.PRIMARY)
     self.moreMenu = QMenu(self)
     self.moreButton.setMenu(self.moreMenu)
+    self.newFromTemplateAction = action('New item from template…', self, Command.NEW_FROM_TEMPLATE, self.moreMenu)
     action('Export list as CSV', self, Command.EXPORT_CSV, self.moreMenu)
     self.moreMenu.addSeparator()
     self.tableAddOnMenu = self.moreMenu.addMenu('Table add-ons')
@@ -211,6 +214,7 @@ class TableView(Widget):
 
     self.galleryAction.setVisible(self.docType.startswith('measurement'))
     self.changeColumnsAction.setVisible(self.docType not in ('-', '_tags_'))
+    self.newFromTemplateAction.setVisible(self.docType in self.comm.docTypesTitles and not self.docType.startswith('x'))
     self.showHiddenAction.setText('Hide hidden items' if self.showAll else 'Show hidden items')
     self.filterW.setVisible(bool(self.filterRows))
     if self.gallery.isVisible():
@@ -259,6 +263,8 @@ class TableView(Widget):
       else:
         self.comm.formDoc.emit({'type': [self.docType], '_projectID': self.comm.projectID})
       self.refresh()
+    elif commandType is Command.NEW_FROM_TEMPLATE:
+      self.newFromTemplate()
     elif commandType is Command.TOGGLE_SELECTION:
       if self.gallery.isVisible():
         selectAll = len(self.gallery.selectedItems()) != self.gallery.count()
@@ -325,6 +331,46 @@ class TableView(Widget):
     elif commandType is Command.CHANGE_COLUMNS:
       if TableHeader(self.comm, self.docType).exec():
         self.refresh()
+
+
+  def newFromTemplate(self) -> None:
+    """Create a new item from an item template: the form opens with its key-value pairs"""
+    fileName = QFileDialog.getOpenFileName(self, 'New item from template', str(Path.home()), 'Template (*.json)')[0]
+    if not fileName:
+      return
+    try:
+      template = readTemplate(fileName)
+    except ValueError as error:
+      showMessage(self, 'Cannot use template', str(error), 'Critical')
+      return
+    items = template.get('items', [])
+    if not items:
+      showMessage(self, 'No item in template', 'This template only contains item types. Import them in the item '
+                  'type editor.')
+      return
+    item = items[0]
+    if len(items) > 1:
+      names = [f"{i.get('name') or 'unnamed'} ({i['docType']})" for i in items]
+      name, ok = QInputDialog.getItem(self, 'Select item', 'This template contains several items:', names, 0, False)
+      if not ok:
+        return
+      item = items[names.index(name)]
+    if item['docType'] not in self.comm.docTypesTitles:
+      showMessage(self, 'Item type is missing', f"The item type {item['docType']} of this template does not exist in "
+                  'this project group. Import it first: open the item type editor, select Import… and select this '
+                  'template file.')
+      return
+    if isMarkdownItem(item):
+      # workflow items are created as Markdown file in the project: the database only stores the beginning
+      if not self.comm.projectID:
+        showMessage(self, 'Select a project', 'Workflow items are created as Markdown file in a project. Select a '
+                    'project first.')
+        return
+      self.comm.uiRequestTask.emit(Task.NEW_FROM_TEMPLATE, {'hierStack':[self.comm.projectID], 'item':item})
+      self.refresh()
+      return
+    self.comm.formDoc.emit(templateToDoc(item) | {'_projectID': self.comm.projectID})
+    self.refresh()
 
 
   @Slot(dict)
@@ -581,3 +627,4 @@ class Command(Enum):
   EXPORT_CSV = 11
   ADD_ON = 12
   CHANGE_COLUMNS = 13
+  NEW_FROM_TEMPLATE = 14

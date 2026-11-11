@@ -312,14 +312,14 @@ class MainWindow(QMainWindow):
     if task is Task.OPEN_EXTERNAL and path:
       QDesktopServices.openUrl(QUrl.fromLocalFile(path))
       return
-    if task in (Task.SCAN, Task.DROP_EXTERNAL):
+    if task in (Task.SCAN, Task.DROP_EXTERNAL, Task.NEW_FROM_TEMPLATE):
       self.comm.changeProject.emit(self.comm.projectID, '')
     elif task is Task.CHECK_DB:
       MessageDialog(self, 'Database verification', json.loads(reportText),
                     style='QScrollArea { min-height: 400px; }').exec()
       return
     elif task not in (Task.EXTRACTOR_TEST, Task.EXTRACTOR_RERUN, Task.DELETE_DOC, Task.EXPORT_ELN, Task.IMPORT_ELN,
-                      Task.SYNC_ELAB):                              # e.g. extractor tests work out of the box
+                      Task.SYNC_ELAB, Task.EXPORT_TEMPLATE, Task.IMPORT_TEMPLATE):   # e.g. extractor tests work out of the box
       logging.error('Unknown task in showReport: %s', task, exc_info=True)
     showMessage(self, 'Report', reportText, image=image)
 

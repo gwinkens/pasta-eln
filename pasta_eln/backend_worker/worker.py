@@ -23,6 +23,7 @@ from .backend import Backend
 from .dataverse import DataverseClient
 from .elab_ftw_sync import MERGE_LABELS, Pasta2Elab
 from .input_output import exportELN, importELN
+from .templates import exportTemplate, importItemTypes, readTemplate, templateToDoc, writeMarkdown, writeTemplate
 from .zenodo import ZenodoClient
 
 waitTimeBeforeSendingFirstMessage = 0.1  # ensure all UI elements are up
@@ -47,6 +48,9 @@ class Task(Enum):
   SEND_REPOSITORY= (15, 'Uploading project to repository:')        #keys: projID, docTypes,repositories,metadata,uploadZenodo
   CHECK_DB       = (16, 'Checking database integrity:')            #keys: style
   OPEN_EXTERNAL  = (17, '')                                        #keys: docID
+  EXPORT_TEMPLATE= (18, '')                                        #keys: fileName, docTypes, docID, withValues
+  IMPORT_TEMPLATE= (19, '')                                        #keys: fileName, actions
+  NEW_FROM_TEMPLATE=(20, '')                                       #keys: hierStack, item
 
   def __init__(self, num:int, msgWaitDialog:str='') -> None:
     """Initialize the task with a number and an optional message for the wait dialog
@@ -364,6 +368,9 @@ class BackendWorker(QObject):
       report = exportELN(self.backend, [data['projID']], data['fileName'], data['docTypes'])
       self.beSendTaskReport.emit(task, report, '', '')
 
+    elif task in (Task.EXPORT_TEMPLATE, Task.IMPORT_TEMPLATE, Task.NEW_FROM_TEMPLATE):
+      self.beSendTaskReport.emit(task, self.templateTask(task, data), '', '')
+
     elif task is Task.IMPORT_ELN and set(data.keys())=={'fileName','projID'}:
       report, statistics = importELN(self.backend, data['fileName'], data['projID'])
       self.beSendTaskReport.emit(task, f'{report}\n{json.dumps(statistics,indent=2)}', '', '')
@@ -471,6 +478,47 @@ class BackendWorker(QObject):
 
     else:
       logging.error('Got task, which I do not understand %s %s', task, data.keys(), exc_info=True)
+
+
+  def templateTask(self, task:Task, data:dict[str,Any]) -> str:
+    """ Export or import a template, or create an item from a template, see backend_worker/templates.py
+    Args:
+      task (Task): EXPORT_TEMPLATE, IMPORT_TEMPLATE or NEW_FROM_TEMPLATE
+      data (dict): data required for the task
+    Returns:
+      str: report
+    """
+    if task is Task.EXPORT_TEMPLATE and set(data.keys())=={'fileName','docTypes','docID','withValues'}:
+      try:
+        template = exportTemplate(self.backend.db, data['docTypes'], data['docID'], data['withValues'])
+        writeTemplate(template, data['fileName'])
+      except (OSError, ValueError) as error:
+        return f'Template could not be exported: {error}'
+      content = [f"- {i['name']} (item, {'with' if data['withValues'] else 'without'} values)"
+                 for i in template['items']] + [f"- {i['title']} (item type)" for i in template['itemTypes']]
+      return f"Exported template to {data['fileName']}:\n" + '\n'.join(content)
+    if task is Task.IMPORT_TEMPLATE and set(data.keys())=={'fileName','actions'}:
+      try:
+        return 'Imported item types:\n' + importItemTypes(self.backend.db, readTemplate(data['fileName']),
+                                                           data['actions'])
+      except ValueError as error:
+        return f'Template could not be imported: {error}'
+    if task is Task.NEW_FROM_TEMPLATE and set(data.keys())=={'hierStack','item'}:
+      # the content is written to a Markdown file in the project, the item is created from that file, so that the
+      # Markdown extractor reads it (if it is installed); the content in the database is only the beginning
+      self.backend.cwd = Path(self.backend.db.getDoc(data['hierStack'][-1])['branch'][0]['path'])
+      doc = templateToDoc(data['item'])
+      try:
+        path = writeMarkdown(data['item'], self.backend.basePath/self.backend.cwd)
+      except OSError as error:
+        return f'Item could not be created from the template: {error}'
+      doc['name'] = path.relative_to(self.backend.basePath).as_posix()
+      doc = self.backend.addData(data['item']['docType'], doc, data['hierStack'])          # saved item
+      if not doc.get('id'):
+        return f'Item could not be created from {path.name}.'
+      self.beSendDoc.emit(doc)
+      return f"Created {path.name} from the template as {'/'.join(doc['type'])} item."
+    return f'Unknown template task: {task}'
 
 
   @Slot(list)

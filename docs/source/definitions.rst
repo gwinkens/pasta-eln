@@ -30,6 +30,25 @@ Located under "Project Group," the editor allows users to:
 
 **Note**: Metadata must be unique and include a name, tags, and comments in the general tab.
 
+.. _itemTemplates:
+
+Templates
+---------
+
+Templates are JSON files that share item types and items between project groups and with other people.
+
+* **Export item types**: In the item type editor, select **Export…** and select the item types. The template contains
+  their fields, units, lists, and descriptions.
+* **Import item types**: In the item type editor, select **Import…** and select a template. A preview compares each
+  item type with the project group and offers the actions **Add** (new item types), **Add missing fields** (existing
+  fields stay unchanged), **Replace** (also removes fields that are not in the template), and **Skip**. Nothing is
+  changed before **Import** is selected.
+* **Export an item**: In the Details pane, select **Export as template…**. The template contains the item type and the
+  item's keys and units, and optionally its values, comment, and tags. Links to other items and vendor/user metadata
+  are left out.
+* **New item from a template**: Above a list, select **More > New item from template…**. The form opens with the keys
+  and values of the template. If the item type is missing, import it first.
+
 .. _definitionGUI:
 
 Definition Overview

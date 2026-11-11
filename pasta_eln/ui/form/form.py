@@ -135,6 +135,7 @@ class Form(QDialog):
     self.comboBoxDocTypeList:dict[str, list[tuple[QComboBox,str]]] = {}    # docType: comboBoxes linking to it
     self.projectTableData:pd.DataFrame|None = None
     self.showAdvanced = False
+    self.extraUnits: dict[str, str] = {}             # units of keys that are not in the item type: kept on save
 
     # Request data
     if not self.flagNewDoc:
@@ -499,6 +500,9 @@ class Form(QDialog):
           else:
             setattr(self, elementName, QLineEdit(value))
             self.allUserElements.append((key,'LineEdit'))
+            if isinstance(defaultValue, tuple) and defaultValue[1] and \
+               key not in [f"{i['class']}.{i['name']}" for i in self.dataHierarchyNodeRaw]:
+              self.extraUnits[key] = defaultValue[1]
           if key not in [f"{i['class']}.{i['name']}" for i in self.dataHierarchyNodeRaw]:
             formLabelW = Label(label, 'h3', None, self.formLabelClicked, key)
           else:
@@ -739,7 +743,8 @@ class Form(QDialog):
             elif valueNew!='- no link -' or dataNew is None:
               self.doc[key] = valueNew
           else:                                                                             #normal text field
-            self.doc[key] = getattr(self, elementName).text().strip()
+            text = getattr(self, elementName).text().strip()
+            self.doc[key] = (text, self.extraUnits[key], '', '') if text and key in self.extraUnits else text
         # elif valueOld is None and key in self.doc:  #important entry, set to empty string
         #   self.doc[key]=''
         #   print('Is this really needed?')

@@ -3,6 +3,10 @@
 ## [Unreleased](https://github.com/PASTA-ELN/pasta-eln/tree/HEAD)
 [Full Changelog](https://github.com/PASTA-ELN/pasta-eln/compare/v3.2.3b2...HEAD)
 
+**Improvements:**
+
+- Templates: item types can be exported and imported in the item type editor, with a preview of the differences; an item can be exported as template and new items can be created from a template
+
 **Bug fixes:**
 
 - Extractor item type does not work on Linux. [\#642](https://github.com/PASTA-ELN/pasta-eln/issues/642)

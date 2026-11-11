@@ -24,6 +24,9 @@ MAIN_ORDER     =['id'  ,'name','user','type','dateCreated','dateModified','gui',
 MAIN_TYPE      =['TEXT','TEXT','TEXT','TEXT','TEXT',       'TEXT',        'varchar(2)','TEXT',  'TEXT',  'TEXT', 'TEXT',   'TEXT',   'TEXT',     'TEXT']
 DOC_TYPES      =['docType', 'PURL','title','icon','shortcut','view']
 DOC_TYPE_SCHEMA=['docType', 'class', 'idx', 'name', 'unit', 'mandatory', 'list']
+# items create definitions for new keys, but an empty label/PURL of an item does not overwrite existing ones
+DEFINITIONS_UPSERT = 'INSERT INTO definitions VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET long=excluded.long, '\
+                     "PURL=excluded.PURL WHERE excluded.long!='' OR excluded.PURL!='';"
 
 
 class SqlLiteDB:
@@ -376,8 +379,7 @@ class SqlLiteDB:
       return
     cmd = 'INSERT OR REPLACE INTO properties VALUES (?, ?, ?, ?);'
     self.cursor.executemany(cmd, [(docID, k, v, u) for k, (v, u, _, _) in flat.items()])
-    cmdDef = 'INSERT OR REPLACE INTO definitions VALUES (?, ?, ?);'
-    self.cursor.executemany(cmdDef, [(k, l, p) for k, (_, _, l, p) in flat.items()])
+    self.cursor.executemany(DEFINITIONS_UPSERT, [(k, l, p) for k, (_, _, l, p) in flat.items()])
     self.connection.commit()
     return
 
@@ -529,7 +531,6 @@ class SqlLiteDB:
     if not flat and not dataOld:
       return changesDict
     cmdInsert = 'INSERT OR REPLACE INTO properties VALUES (?, ?, ?, ?);'
-    cmdDef = 'INSERT OR REPLACE INTO definitions VALUES (?, ?, ?);'
     for key, (value, unit, label, purl) in flat.items():
       if key in dataOld:
         oldValue, oldUnit = dataOld[key]
@@ -539,7 +540,7 @@ class SqlLiteDB:
           changesDict[key] = oldValue
       else:
         self.cursor.execute(cmdInsert, [docID, key, value, unit])
-      self.cursor.execute(cmdDef, [key, label, purl])
+      self.cursor.execute(DEFINITIONS_UPSERT, [key, label, purl])
       if key in dataOld:
         del dataOld[key]
     if dataOld:

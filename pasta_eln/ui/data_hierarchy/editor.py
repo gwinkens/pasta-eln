@@ -1,10 +1,13 @@
 """ dialog to edit docType schema """
 from enum import Enum
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from PySide6.QtCore import QAbstractItemModel, QModelIndex, Slot
-from PySide6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QInputDialog, QMessageBox, QTabBar, QTableWidget,
-                               QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QHBoxLayout, QInputDialog, QMessageBox, QTabBar,
+                               QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
+from ...backend_worker.templates import compareItemTypes, readTemplate
+from ...backend_worker.worker import Task
 from ...fixed_strings_json import defaultDataHierarchyNode
 from ..gui_communicate import Communicate
 from ..gui_style import SPACE, Button, ButtonStyle, Label
@@ -15,11 +18,16 @@ from .list_free_delegate import ListFreeDelegate
 from .list_item_delegate import ListItemDelegate
 from .mandatory_column_delegate import MandatoryColumnDelegate
 from .name_column_delegate import NameColumnDelegate
+from .template_dialogs import ItemTypeExportDialog, ItemTypeImportDialog
 
 #                0       1            2      3           4      5         6
 COLUMN_NAMES = ['name','description','unit','mandatory','item list','free list','move up','remove']
 COLUMN_WIDTH = [100,   250,          60,    80,         150,        200,        60,       50]
 pd.options.mode.copy_on_write = True
+# fields of all item types, for the preview of a template import
+IMPORT_SCHEMA_CMD = 'SELECT docTypes.docType AS docType, docTypeSchema.class AS class, docTypeSchema.name AS name, '\
+                    'docTypeSchema.unit AS unit, docTypeSchema.mandatory AS mandatory, docTypeSchema.list AS list '\
+                    'FROM docTypes LEFT JOIN docTypeSchema ON docTypes.docType = docTypeSchema.docType'
 
 
 def _hasEditableName(index: QModelIndex) -> bool:
@@ -60,9 +68,12 @@ class SchemeEditor(QDialog):
     super().__init__()
     self.comm = comm
     self.comm.backendThread.worker.beSendSQL.connect(self.onGetData)
+    self.comm.docTypesChanged.connect(self.reloadDocTypes)
     self.docType = ''
     self.docLabel= ''
     self.cmd     = ''
+    self.importFile = ''                                              # template file that is being imported
+    self.reloadAfterImport = False
     self.df      = pd.DataFrame()
     self.docTypesLabels = [(k,v['title']) for k,v in self.comm.docTypesTitles.items()]
     self.closeButtons:list[Button] = []                                                # close buttons of tabs
@@ -105,13 +116,16 @@ class SchemeEditor(QDialog):
     # Final actions
     mainL.addStretch(1)
     footer = QHBoxLayout()
+    Button('Import…', self, Command.IMPORT, footer, icon='ri.download-2-line',
+           tooltip='Import item types from a template file')
+    Button('Export…', self, Command.EXPORT, footer, icon='ri.upload-2-line',
+           tooltip='Export item types as template file, e.g. to share them')
     footer.addStretch()
     Button('Cancel', self, Command.CANCEL, footer)
     Button('Save', self, Command.SAVE, footer, style=ButtonStyle.HIGHLIGHTED)
     mainL.addLayout(footer)
     #initialize
-    _ = [self.selectDocType.addItem(v,k) for k,v in self.docTypesLabels]
-    self.selectDocType.setCurrentIndex(0)
+    self.paintDocTypes()
     return
 
 
@@ -125,6 +139,8 @@ class SchemeEditor(QDialog):
     if cmd==self.cmd:
       self.df = data
       self.paint()
+    elif cmd==IMPORT_SCHEMA_CMD and self.importFile:
+      self.previewImport(data)
 
 
   def changeDocType(self, label:str) -> None:
@@ -288,10 +304,93 @@ class SchemeEditor(QDialog):
         self.comm.uiSendSQL.emit([{'type':'one','cmd':
           f"DELETE FROM docTypeSchema WHERE docType == '{self.docType}' AND class == '{group}'"}])
         self.changeDocType(docLabel)
+    elif action is Command.EXPORT:
+      self.saveShownDocType()                                                 # export includes current changes
+      exportDialog = ItemTypeExportDialog(self.comm, self.docType)
+      if not exportDialog.exec():
+        return
+      selected = exportDialog.selected
+      defaultName = selected[0].replace('/', '_') if len(selected)==1 else 'item_types'
+      fileName = QFileDialog.getSaveFileName(self, 'Export item types as template',
+                                             str(Path.home()/f'{defaultName}.json'), 'Template (*.json)')[0]
+      if fileName:
+        fileName += '' if fileName.endswith('.json') else '.json'
+        self.comm.uiRequestTask.emit(Task.EXPORT_TEMPLATE, {'fileName':fileName, 'docTypes':selected,
+                                                            'docID':'', 'withValues':False})
+    elif action is Command.IMPORT:
+      fileName = QFileDialog.getOpenFileName(self, 'Import item types from template', str(Path.home()),
+                                             'Template (*.json)')[0]
+      if not fileName:
+        return
+      try:
+        template = readTemplate(fileName)
+      except ValueError as error:
+        showMessage(self, 'Cannot import template', str(error), 'Critical')
+        return
+      if not template.get('itemTypes'):
+        showMessage(self, 'Nothing to import', 'This template does not contain item types.')
+        return
+      self.saveShownDocType()                                               # preview compares with saved state
+      self.importFile = fileName
+      self.comm.uiSendSQL.emit([{'type':'get_df', 'cmd':IMPORT_SCHEMA_CMD}])
     elif action is Command.CANCEL:
       self.closeDialog(False)
     elif action is Command.SAVE:
       self.closeDialog(True)
+    return
+
+
+  def saveShownDocType(self) -> None:
+    """ Save the shown item type, if its fields have been received and shown """
+    if self.docType and self.tabW.count() > 1:                                     # more than the + tab
+      self.finishDocType()
+
+
+  def previewImport(self, data:pd.DataFrame) -> None:
+    """ Show the preview of the template import and import the selected item types
+
+    Args:
+      data (pd.DataFrame): fields of all item types in the project group, see IMPORT_SCHEMA_CMD
+    """
+    fileName, self.importFile = self.importFile, ''
+    currentSchemas = {docType:[row for row in rows.to_dict('records') if row['name']]
+                      for docType, rows in data.groupby('docType')}
+    try:
+      comparison = compareItemTypes(readTemplate(fileName), currentSchemas)
+    except ValueError as error:
+      showMessage(self, 'Cannot import template', str(error), 'Critical')
+      return
+    importDialog = ItemTypeImportDialog(self.comm, comparison)
+    if importDialog.exec() and importDialog.importActions:
+      self.comm.uiRequestTask.emit(Task.IMPORT_TEMPLATE, {'fileName':fileName, 'actions':importDialog.importActions})
+      self.reloadAfterImport = True
+      self.comm.commSendConfiguration.emit(self.comm.configuration, self.comm.projectGroup)#reload item types
+    return
+
+
+  def reloadDocTypes(self) -> None:
+    """ Reload the item types after a template import """
+    if not self.reloadAfterImport:
+      return
+    self.reloadAfterImport = False
+    self.docType = ''                                  # prevent self.finishDocType from saving the old fields
+    self.docTypesLabels = [(k,v['title']) for k,v in self.comm.docTypesTitles.items()]
+    self.paintDocTypes(self.docLabel)
+    return
+
+
+  def paintDocTypes(self, label:str='') -> None:
+    """ Fill the item type selection and show the fields of the selected item type
+
+    Args:
+      label (str): label of the item type that is selected; the first one if it does not exist
+    """
+    self.selectDocType.blockSignals(True)
+    self.selectDocType.clear()
+    _ = [self.selectDocType.addItem(v,k) for k,v in self.docTypesLabels]
+    self.selectDocType.setCurrentIndex(max(self.selectDocType.findText(label), 0))
+    self.selectDocType.blockSignals(False)
+    self.changeDocType(self.selectDocType.currentText())
     return
 
 
@@ -365,12 +464,14 @@ class SchemeEditor(QDialog):
   def reject(self) -> None:
     """ Reject the dialog, stop the thread and disconnect signals """
     self.comm.backendThread.worker.beSendSQL.disconnect(self.onGetData)
+    self.comm.docTypesChanged.disconnect(self.reloadDocTypes)
     super().reject()
 
 
   def accept(self) -> None:
     """ Accept the dialog, stop the thread and disconnect signals """
     self.comm.backendThread.worker.beSendSQL.disconnect(self.onGetData)
+    self.comm.docTypesChanged.disconnect(self.reloadDocTypes)
     super().accept()
 
 
@@ -382,3 +483,5 @@ class Command(Enum):
   DEL_GROUP    = 4
   SAVE         = 5
   CANCEL       = 6
+  EXPORT       = 7
+  IMPORT       = 8

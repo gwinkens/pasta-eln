@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Any, Literal, overload
 from PySide6.QtCore import QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QFontMetrics, QShowEvent, Qt
-from PySide6.QtWidgets import QHBoxLayout, QMenu, QMessageBox, QScrollArea, QSplitter, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QMenu, QMessageBox, QScrollArea, QSplitter, QTextEdit,
+                               QVBoxLayout, QWidget)
 from pasta_eln.backend_worker.worker import Task
 from pasta_eln.fixed_strings_json import SORTED_DB_KEYS, defaultDataHierarchyNode
 from pasta_eln.misc_tools import clearLayout
-from pasta_eln.text_tools.string_changes import createDirName
+from pasta_eln.text_tools.string_changes import camelCase, createDirName
 from pasta_eln.ui.details.context import DetailContext, DetailOrigin
 from pasta_eln.ui.details.details_hier_item import DetailsHierItem
 from pasta_eln.ui.details.resize_image import ResizeImage
@@ -256,6 +257,8 @@ class Details(Widget):
     if 'image' in self.data and self.sourcePath() is not None:
       addAction('Save image', self, Command.SAVE_EXTRACTED_IMAGE, extractionMenu)
     self.actionsMenu.addSeparator()
+    if not documentTypes or not documentTypes[0].startswith('x'):                   # not projects and folders
+      addAction('Export as template…', self, Command.EXPORT_TEMPLATE, self.actionsMenu)
     addAction('Hide item', self,     Command.HIDE_ITEM,    self.actionsMenu)
     addAction('Close details', self, Command.HIDE_DETAILS, self.actionsMenu)
     self.actionsMenu.addSeparator()
@@ -327,6 +330,25 @@ class Details(Widget):
           self.comm.changeProject.emit(stack.split('/')[0], '')
         else:
           self.comm.changeTable.emit(self.data['type'][0], self.comm.projectID, '')
+    elif commandType is Command.EXPORT_TEMPLATE:
+      message = QMessageBox(self)
+      message.setWindowTitle('Export as template')
+      message.setText(f'Export “{self.data["name"]}” as template for new items. Should the template include the '
+                      'values, comment and tags of this item, or only its keys and units?')
+      valuesButton = message.addButton('With values', QMessageBox.ButtonRole.AcceptRole)
+      keysButton = message.addButton('Keys and units only', QMessageBox.ButtonRole.AcceptRole)
+      message.addButton(QMessageBox.StandardButton.Cancel)
+      message.exec()
+      if message.clickedButton() not in (valuesButton, keysButton):
+        return
+      withValues = message.clickedButton() is valuesButton
+      defaultName = camelCase(self.data['name']) or 'template'
+      fileName = QFileDialog.getSaveFileName(self, 'Export as template', str(Path.home()/f'{defaultName}.json'),
+                                             'Template (*.json)')[0]
+      if fileName:
+        fileName += '' if fileName.endswith('.json') else '.json'
+        self.comm.uiRequestTask.emit(Task.EXPORT_TEMPLATE, {'fileName':fileName, 'docTypes':[], 'docID':self.docID,
+                                                            'withValues':withValues})
     elif commandType is Command.HIDE_DETAILS:
       self.comm.changeDetails.emit(DetailContext())                 # all widgets know that details are hidden
 
@@ -410,3 +432,4 @@ class Command(Enum):
   OPEN_LIST            = 9
   OPEN_EXTERNAL        = 10
   REMOVE               = 11
+  EXPORT_TEMPLATE      = 12

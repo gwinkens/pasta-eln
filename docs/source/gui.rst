@@ -42,6 +42,9 @@ The following table gives the shortest route to the most common tasks.
    Edit metadata,Select an item and choose **Edit** in the Details pane
    Configure data types,Use **Project group > Configure > Item type editor**
    Configure definitions,Use **Project group > Configure > Definitions editor**
+   Share item types,Use **Import…** and **Export…** in the **Item type editor**
+   Save an item as template,Select an item and choose **Export as template…** in the Details actions menu
+   Add an item from a template,Use **More > New item from template…** above the list
    Publish a project,Use **Project > Upload to repository**
 
 Project visibility and files
